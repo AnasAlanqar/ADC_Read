@@ -18,7 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "stdio.h"
+#include <stdio.h>
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
@@ -59,11 +59,16 @@ static void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* ---- Retarget printf to USART1 ---- */
 int _write(int file, char *ptr, int len) {
   (void)file;
   HAL_UART_Transmit(&huart1, (uint8_t*)ptr, (uint16_t)len, HAL_MAX_DELAY);
   return len;
 }
+
+/* ---- Globals updated by ISR ---- */
+static volatile uint16_t g_adc_avg = 0;    // latest averaged value (0..4095)
+static volatile uint8_t  g_adc_new = 0;    // set to 1 when a fresh avg is ready
 /* USER CODE END 0 */
 
 /**
@@ -98,25 +103,29 @@ int main(void)
   MX_ADC1_Init();
   MX_USART1_UART_Init();
   /* USER CODE BEGIN 2 */
+  /* Calibrate (F1) and start ADC with interrupts */
   HAL_ADCEx_Calibration_Start(&hadc1);
+  HAL_ADC_Start_IT(&hadc1);   // continuous conv mode → periodic EOC interrupts
 
 
-
+  printf("\r\nADC interrupt demo (continuous + averaging)\r\n");
+  uint32_t next_print = HAL_GetTick();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	    HAL_ADC_Start(&hadc1);
-	    if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK)
-	    {
-	        uint32_t raw = HAL_ADC_GetValue(&hadc1);      // 0..4095
-	        uint32_t mv  = (3300u * raw + 2047u) / 4095u; // rounded mV
-	        printf("raw=%4lu | %lu.%03lu V\r\n",
-	               (unsigned long)raw, mv/1000, mv%1000);
+	    /* Print at ~20 Hz if a new averaged value is available */
+	    if (g_adc_new && HAL_GetTick() >= next_print) {
+	      next_print += 50;                // 50 ms
+	      uint16_t raw = g_adc_avg;        // take a copy
+	      g_adc_new = 0;
+
+	      /* integer millivolts so you don't need float printf */
+	      uint32_t mv = (3300u * raw + 2047u) / 4095u;
+	      printf("raw=%4u | %lu.%03lu V\r\n", raw, mv/1000, mv%1000);
 	    }
-	    HAL_Delay(50);
 
     /* USER CODE END WHILE */
 
@@ -190,7 +199,7 @@ static void MX_ADC1_Init(void)
   */
   hadc1.Instance = ADC1;
   hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
-  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
@@ -269,7 +278,25 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+  if (hadc->Instance != ADC1) return;
 
+  /* Simple boxcar average of 16 samples */
+  static uint32_t acc = 0;
+  static uint8_t  n   = 0;
+
+  uint16_t v = (uint16_t)HAL_ADC_GetValue(hadc);  // 0..4095
+  acc += v;
+  n++;
+
+  if (n >= 16) {
+    g_adc_avg = (uint16_t)(acc >> 4);   // /16
+    g_adc_new = 1;
+    acc = 0;
+    n = 0;
+  }
+}
 /* USER CODE END 4 */
 
 /**
