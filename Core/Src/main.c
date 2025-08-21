@@ -111,8 +111,8 @@ int main(void)
 	    HAL_ADC_Start(&hadc1);
 	    if (HAL_ADC_PollForConversion(&hadc1, 10) == HAL_OK)
 	    {
-	        uint32_t raw = HAL_ADC_GetValue(&hadc1);      // 0..4095
-	        uint32_t mv  = (3300u * raw + 2047u) / 4095u; // rounded mV
+	        uint32_t raw = HAL_ADC_GetValue(&hadc1);      
+	        uint32_t mv  = (3300u * raw + 2047u) / 4095u; 
 	        printf("raw=%4lu | %lu.%03lu V\r\n",
 	               (unsigned long)raw, mv/1000, mv%1000);
 	    }
